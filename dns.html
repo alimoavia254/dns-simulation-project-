@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced DNS & HTTP Simulator</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --panel: #161b22;
+            --border: #30363d;
+            --accent: #58a6ff;
+            --text: #c9d1d9;
+            --success: #2ea043;
+            --danger: #da3633;
+            --http: #d2a8ff;
+            --terminal-bg: #000;
+        }
+
+        body {
+            font-family: 'Segoe UI', 'Roboto', monospace;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* --- Header & Controls --- */
+        header {
+            padding: 15px 20px;
+            background: var(--panel);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 { margin: 0; font-size: 1.2rem; display: flex; align-items: center; gap: 10px; }
+        .badge { font-size: 0.7rem; background: var(--border); padding: 2px 6px; border-radius: 4px; }
+
+        .control-group {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        button {
+            background: var(--btn-bg, #21262d);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        button:hover { background: #30363d; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .btn-play { --btn-bg: #1f6feb; color: white; border: none; }
+        .btn-stop { color: var(--danger); }
+        .btn-pause { border-color: var(--accent); color: var(--accent); }
+
+        /* Toggle Switch */
+        .toggle-wrapper { display: flex; align-items: center; gap: 8px; margin-left: 15px; border-left: 1px solid var(--border); padding-left: 15px; }
+        .switch { position: relative; display: inline-block; width: 34px; height: 18px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #30363d; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 12px; width: 12px; left: 3px; bottom: 3px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: var(--danger); }
+        input:checked + .slider:before { transform: translateX(16px); }
+
+        /* --- Main Visual Stage --- */
+        .stage-container {
+            flex: 1;
+            position: relative;
+            background: radial-gradient(circle at center, #13171f 0%, #0d1117 100%);
+            overflow: hidden;
+        }
+
+        svg.connections { position: absolute; width: 100%; height: 100%; top: 0; left: 0; pointer-events: none; }
+        line { stroke: #30363d; stroke-width: 2; transition: stroke 0.3s; }
+        line.active-path { stroke: var(--accent); stroke-opacity: 0.6; }
+
+        /* Nodes */
+        .node {
+            position: absolute;
+            width: 120px;
+            height: 90px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 2;
+            cursor: default;
+        }
+
+        .node-icon { font-size: 2rem; margin-bottom: 5px; }
+        .node-label { font-size: 0.85rem; font-weight: 600; }
+        .node-status { font-size: 0.7rem; color: #8b949e; margin-top: 4px; }
+        .node-ip { font-family: monospace; font-size: 0.7rem; color: #58a6ff; opacity: 0; transition: opacity 0.3s; }
+
+        /* Interactive Node (Browser) */
+        #node-browser { cursor: pointer; border-color: var(--accent); }
+        #node-browser:hover { box-shadow: 0 0 15px rgba(88, 166, 255, 0.2); transform: scale(1.02); }
+        .pulse { animation: pulse 2s infinite; }
+        
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.4); }
+            70% { box-shadow: 0 0 0 15px rgba(88, 166, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0); }
+        }
+
+        /* Active/Compromised States */
+        .node.active { border-color: var(--accent); background: #1f242e; }
+        .node.compromised { border-color: var(--danger); background: #2a1515; }
+        .node.success { border-color: var(--success); }
+
+        /* Packet */
+        .packet {
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            background: var(--accent);
+            border-radius: 50%;
+            z-index: 10;
+            display: none;
+            box-shadow: 0 0 10px var(--accent);
+            transform: translate(-50%, -50%);
+        }
+        .packet-label {
+            position: absolute;
+            top: -22px; left: 50%; transform: translateX(-50%);
+            white-space: nowrap; font-size: 0.75rem; background: rgba(0,0,0,0.7);
+            padding: 2px 6px; border-radius: 4px; pointer-events: none;
+        }
+        .packet.malicious { background: var(--danger); box-shadow: 0 0 10px var(--danger); }
+        .packet.http { background: var(--http); box-shadow: 0 0 10px var(--http); }
+
+        /* --- Footer Info & Terminal --- */
+        .info-deck {
+            height: 220px;
+            background: var(--panel);
+            border-top: 1px solid var(--border);
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+        }
+
+        .narrative {
+            padding: 20px;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+        }
+        .narrative h3 { margin-top: 0; color: var(--accent); }
+        .narrative p { line-height: 1.5; color: var(--text); font-size: 0.95rem; }
+
+        .terminal {
+            background: var(--terminal-bg);
+            padding: 15px;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.8rem;
+            color: #3fb950;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #111; padding-bottom: 2px; }
+        .log-time { color: #8b949e; margin-right: 8px; }
+        .log-warn { color: #d29922; }
+        .log-err { color: #f85149; }
+
+        /* --- Modal --- */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 100;
+            display: none; align-items: center; justify-content: center;
+        }
+        .modal {
+            background: var(--panel); border: 1px solid var(--border);
+            padding: 25px; width: 400px; border-radius: 8px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.5); text-align: center;
+        }
+        .modal input {
+            width: 80%; padding: 10px; margin: 15px 0;
+            background: var(--bg); border: 1px solid #444; color: white;
+            border-radius: 4px; font-size: 1rem;
+        }
+        .modal-btn {
+            background: var(--accent); color: #000; border: none; padding: 8px 20px;
+            border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>DNS & HTTP Journey <span class="badge">Interactive</span></h1>
+    
+    <div class="control-group">
+        <button id="btn-pause" onclick="togglePause()" disabled>⏸ Pause</button>
+        <button id="btn-stop" class="btn-stop" onclick="stopSimulation()" disabled>⏹ Stop</button>
+        
+        <div class="toggle-wrapper">
+            <span style="font-size: 0.85rem">Attacker Mode</span>
+            <label class="switch">
+                <input type="checkbox" id="attacker-toggle">
+                <span class="slider"></span>
+            </label>
+        </div>
+    </div>
+</header>
+
+<div class="stage-container" id="stage">
+    <svg class="connections">
+        <line id="line-res" x1="15%" y1="50%" x2="40%" y2="20%" />
+        <line id="line-root" x1="45%" y1="20%" x2="65%" y2="10%" />
+        <line id="line-tld" x1="45%" y1="20%" x2="75%" y2="30%" />
+        <line id="line-auth" x1="45%" y1="20%" x2="65%" y2="50%" />
+        <line id="line-web" x1="15%" y1="50%" x2="85%" y2="75%" stroke-dasharray="5,5" opacity="0.3" />
+    </svg>
+
+    <div id="node-browser" class="node pulse" style="top: 50%; left: 15%; transform: translateY(-50%);" onclick="handleBrowserClick()">
+        <div class="node-icon">💻</div>
+        <div class="node-label">You (Client)</div>
+        <div class="node-status">Click to Start</div>
+    </div>
+
+    <div id="node-resolver" class="node" style="top: 20%; left: 40%;">
+        <div class="node-icon">🔄</div>
+        <div class="node-label">ISP Resolver</div>
+        <div class="node-status">Idle</div>
+        <div class="node-ip">Cache: Empty</div>
+    </div>
+
+    <div id="node-root" class="node" style="top: 10%; left: 65%;">
+        <div class="node-icon">🌍</div>
+        <div class="node-label">Root (.)</div>
+        <div class="node-status">Idle</div>
+    </div>
+
+    <div id="node-tld" class="node" style="top: 30%; left: 75%;">
+        <div class="node-icon">📂</div>
+        <div class="node-label">TLD (.com)</div>
+        <div class="node-status">Idle</div>
+    </div>
+
+    <div id="node-auth" class="node" style="top: 50%; left: 65%;">
+        <div class="node-icon">🏢</div>
+        <div class="node-label">Auth NS</div>
+        <div class="node-status">Idle</div>
+    </div>
+
+    <div id="node-server" class="node" style="top: 75%; left: 85%;">
+        <div class="node-icon">☁️</div>
+        <div class="node-label">Web Server</div>
+        <div class="node-status">Waiting</div>
+        <div class="node-ip">192.0.2.1</div>
+    </div>
+
+    <div id="packet" class="packet">
+        <div class="packet-label" id="packet-text">DATA</div>
+    </div>
+</div>
+
+<div class="info-deck">
+    <div class="narrative" id="narrative-box">
+        <h3 id="step-title">Welcome</h3>
+        <p id="step-desc">
+            This interactive simulation demonstrates the full lifecycle of a web request.
+            <br><br>
+            <strong>To Begin:</strong> Click the flashing <strong>Computer Icon</strong> above.
+        </p>
+    </div>
+    <div class="terminal" id="terminal-log">
+        <div class="log-entry"><span class="log-time">SYS</span> Ready... Waiting for user input.</div>
+    </div>
+</div>
+
+<div class="modal-overlay" id="url-modal">
+    <div class="modal">
+        <h2>Enter Destination</h2>
+        <p>Type a website address to visit:</p>
+        <input type="text" id="url-input" placeholder="www.example.com" value="www.example.com">
+        <br>
+        <button class="modal-btn" onclick="submitUrl()">Go</button>
+    </div>
+</div>
+
+<script>
+    // --- State Management ---
+    const state = {
+        running: false,
+        paused: false,
+        step: 0,
+        url: '',
+        isAttack: false,
+        stopSignal: false
+    };
+
+    const dom = {
+        browser: document.getElementById('node-browser'),
+        packet: document.getElementById('packet'),
+        packetText: document.getElementById('packet-text'),
+        title: document.getElementById('step-title'),
+        desc: document.getElementById('step-desc'),
+        terminal: document.getElementById('terminal-log'),
+        modal: document.getElementById('url-modal'),
+        input: document.getElementById('url-input'),
+        btnPause: document.getElementById('btn-pause'),
+        btnStop: document.getElementById('btn-stop'),
+        toggle: document.getElementById('attacker-toggle')
+    };
+
+    const nodes = {
+        browser: document.getElementById('node-browser'),
+        resolver: document.getElementById('node-resolver'),
+        root: document.getElementById('node-root'),
+        tld: document.getElementById('node-tld'),
+        auth: document.getElementById('node-auth'),
+        server: document.getElementById('node-server')
+    };
+
+    // --- Interactive Inputs ---
+
+    function handleBrowserClick() {
+        if (state.running) return;
+        dom.modal.style.display = 'flex';
+        dom.input.focus();
+    }
+
+    function submitUrl() {
+        const val = dom.input.value.trim();
+        if(!val) return;
+        
+        state.url = val;
+        dom.modal.style.display = 'none';
+        startSimulation();
+    }
+
+    function togglePause() {
+        state.paused = !state.paused;
+        dom.btnPause.innerText = state.paused ? "▶ Resume" : "⏸ Pause";
+        dom.btnPause.style.borderColor = state.paused ? "#2ea043" : "#58a6ff";
+        dom.btnPause.style.color = state.paused ? "#2ea043" : "#58a6ff";
+        log(state.paused ? "Simulation Paused." : "Simulation Resumed.");
+    }
+
+    function stopSimulation() {
+        state.stopSignal = true;
+        state.paused = false; // Break out of pause loops
+        log("Stopping simulation...", "err");
+        setTimeout(() => location.reload(), 500); // Simple reset
+    }
+
+    // --- Async Helpers & Core Logic ---
+
+    // A smart wait function that respects Pause and Stop
+    async function smartWait(ms) {
+        const slice = 100; // Check every 100ms
+        let elapsed = 0;
+
+        while (elapsed < ms) {
+            if (state.stopSignal) throw new Error("STOP");
+            
+            if (state.paused) {
+                await new Promise(r => setTimeout(r, 200)); // Just wait while paused
+                continue; // Don't increment elapsed
+            }
+
+            await new Promise(r => setTimeout(r, slice));
+            elapsed += slice;
+        }
+    }
+
+    function getCenter(el) {
+        const rect = el.getBoundingClientRect();
+        const container = document.getElementById('stage').getBoundingClientRect();
+        return {
+            x: rect.left + rect.width/2 - container.left,
+            y: rect.top + rect.height/2 - container.top
+        };
+    }
+
+    // --- Visualization Functions ---
+
+    function log(msg, type = 'info') {
+        const div = document.createElement('div');
+        div.className = 'log-entry';
+        const time = new Date().toLocaleTimeString().split(' ')[0];
+        
+        let colorClass = '';
+        if(type === 'warn') colorClass = 'log-warn';
+        if(type === 'err') colorClass = 'log-err';
+
+        div.innerHTML = `<span class="log-time">${time}</span> <span class="${colorClass}">${msg}</span>`;
+        dom.terminal.appendChild(div);
+        dom.terminal.scrollTop = dom.terminal.scrollHeight;
+    }
+
+    function updateNarrative(title, text) {
+        dom.title.innerText = title;
+        dom.desc.innerHTML = text;
+    }
+
+    function setNodeStatus(id, status, type='') {
+        const node = nodes[id];
+        node.querySelector('.node-status').innerText = status;
+        node.className = 'node'; // Reset
+        if(type) node.classList.add(type);
+    }
+
+    async function movePacket(fromId, toId, label, style = 'dns') {
+        if(state.stopSignal) return;
+
+        const start = getCenter(nodes[fromId]);
+        const end = getCenter(nodes[toId]);
+
+        dom.packet.style.left = `${start.x}px`;
+        dom.packet.style.top = `${start.y}px`;
+        dom.packetText.innerText = label;
+        dom.packet.style.display = 'block';
+        
+        // Style
+        dom.packet.className = 'packet'; 
+        if(style === 'http') dom.packet.classList.add('http');
+        if(style === 'malicious') dom.packet.classList.add('malicious');
+
+        // Allow DOM to update
+        await new Promise(r => requestAnimationFrame(r));
+
+        // Transition
+        dom.packet.style.transition = 'all 1.5s ease-in-out';
+        dom.packet.style.left = `${end.x}px`;
+        dom.packet.style.top = `${end.y}px`;
+
+        // Wait for animation duration using smartWait (allows pausing mid-flight logically)
+        await smartWait(1500);
+        dom.packet.style.display = 'none';
+        dom.packet.style.transition = 'none'; // Reset for next jump
+    }
+
+    // --- The Main Simulation Sequence ---
+
+    async function startSimulation() {
+        state.running = true;
+        state.isAttack = dom.toggle.checked;
+        dom.browser.classList.remove('pulse'); // Stop pulsing
+        dom.btnPause.disabled = false;
+        dom.btnStop.disabled = false;
+        dom.toggle.disabled = true;
+
+        try {
+            // STEP 1: Initialization
+            log(`Starting request for: ${state.url}`);
+            updateNarrative("1. Initializing Request", `The browser parses the URL <code>${state.url}</code>. It first checks its local cache.`);
+            setNodeStatus('browser', 'Checking Cache...', 'active');
+            await smartWait(2000);
+
+            log("[CACHE] Local cache miss.");
+            updateNarrative("2. Cache Miss", "The IP address is not found locally. The browser must query the Recursive Resolver.");
+            await smartWait(1500);
+
+            // STEP 2: Browser -> Resolver
+            log(`[DNS] Querying Recursive Resolver...`);
+            await movePacket('browser', 'resolver', 'DNS Query');
+            setNodeStatus('resolver', 'Processing', 'active');
+            setNodeStatus('browser', 'Waiting');
+            
+            updateNarrative("3. Recursive Resolver", "The ISP's Recursive Resolver receives the query. It checks its own cache, then begins traversing the hierarchy.");
+            await smartWait(2000);
+
+            // Attacker Branch?
+            if (state.isAttack) {
+                log("[WARN] MITM Detected / Cache Poisoning attempt!", "warn");
+                updateNarrative("⚠️ ATTACK VECTOR", "<strong>DNS Cache Poisoning:</strong> An attacker has poisoned the Resolver's cache with a fake IP address.");
+                setNodeStatus('resolver', 'COMPROMISED', 'compromised');
+                await smartWait(2000);
+
+                log("[DNS] Resolver returning SPOOFED IP: 6.6.6.6", "err");
+                await movePacket('resolver', 'browser', 'IP: 6.6.6.6', 'malicious');
+                
+                // Jump to connection
+                log("[CONN] Browser connecting to MALICIOUS IP...", "err");
+                setNodeStatus('browser', 'Hijacked', 'compromised');
+                updateNarrative("❌ Connection Hijacked", "The browser unknowingly connects to the attacker's server instead of the real website.");
+                await smartWait(3000); // End scenario
+                return;
+            }
+
+            // Normal Flow: Resolver -> Root
+            log("[DNS] Querying Root Server (.)");
+            updateNarrative("4. Root Server Query", "Resolver asks the Root Server: 'Who handles .com?'");
+            await movePacket('resolver', 'root', '?.com');
+            setNodeStatus('root', 'Lookup', 'active');
+            await smartWait(1000);
+            
+            log("[DNS] Root refers to TLD (.com)");
+            await movePacket('root', 'resolver', 'Ref: TLD');
+            setNodeStatus('root', 'Idle');
+
+            // Resolver -> TLD
+            log("[DNS] Querying TLD Server (.com)");
+            updateNarrative("5. TLD Server Query", "Resolver asks TLD Server: 'Who handles example.com?'");
+            await movePacket('resolver', 'tld', '?.example.com');
+            setNodeStatus('tld', 'Lookup', 'active');
+            await smartWait(1000);
+
+            log("[DNS] TLD refers to Auth NS");
+            await movePacket('tld', 'resolver', 'Ref: Auth NS');
+            setNodeStatus('tld', 'Idle');
+
+            // Resolver -> Auth
+            log("[DNS] Querying Authoritative NS");
+            updateNarrative("6. Authoritative Query", "Resolver asks the Authoritative Server for the final IP.");
+            await movePacket('resolver', 'auth', '?www');
+            setNodeStatus('auth', 'Lookup', 'active');
+            await smartWait(1000);
+
+            log("[DNS] Auth NS found IP: 192.0.2.1");
+            await movePacket('auth', 'resolver', 'IP: 192.0.2.1');
+            setNodeStatus('auth', 'Idle');
+
+            // Resolver Cache & Return
+            log("[DNS] Caching result (TTL 300s)");
+            nodes['resolver'].querySelector('.node-ip').style.opacity = 1;
+            nodes['resolver'].querySelector('.node-ip').innerText = "Cached: " + state.url;
+            updateNarrative("7. Response & Caching", "The Resolver caches the IP for future use and sends it to the browser.");
+            await smartWait(1500);
+
+            await movePacket('resolver', 'browser', '192.0.2.1');
+            setNodeStatus('resolver', 'Idle');
+            setNodeStatus('browser', 'IP Received', 'active');
+            log("[CLIENT] Received IP. Starting TCP Handshake...");
+            await smartWait(2000);
+
+            // HTTP Handshake
+            updateNarrative("8. HTTP Connection", "Browser initiates connection to the Web Server using the IP 192.0.2.1.");
+            // Draw connection line
+            document.getElementById('line-web').style.opacity = 1;
+            document.getElementById('line-web').classList.add('active-path');
+            
+            await movePacket('browser', 'server', 'GET / HTTP/1.1', 'http');
+            setNodeStatus('server', 'Processing', 'active');
+            log("[HTTP] GET Request received.");
+            await smartWait(2000);
+
+            updateNarrative("9. Server Response", "Server processes the request and sends back HTML/CSS/JS.");
+            log("[HTTP] Sending 200 OK.");
+            await movePacket('server', 'browser', '200 OK', 'http');
+            
+            setNodeStatus('browser', 'Rendering', 'success');
+            setNodeStatus('server', 'Idle');
+            updateNarrative("✅ Complete", "The website is loaded and displayed to the user.");
+            log("[SYS] Page Load Complete.");
+
+        } catch (e) {
+            if(e.message === "STOP") {
+                console.log("Simulation Stopped");
+            } else {
+                console.error(e);
+            }
+        }
+    }
+
+</script>
+
+</body>
+</html>
